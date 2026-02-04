@@ -72,10 +72,13 @@ impl AptabaseClient {
     }
 
     /// Starts the event dispatcher loop.
+    ///
+    /// Uses `tauri::async_runtime::spawn` to access Tauri's global Tokio runtime,
+    /// which is available even when not inside an async context.
     pub(crate) fn start_polling(&self, interval: Duration) {
         let dispatcher = self.dispatcher.clone();
 
-        tokio::spawn(async move {
+        tauri::async_runtime::spawn(async move {
             loop {
                 tokio::time::sleep(interval).await;
                 dispatcher.flush().await;
@@ -140,9 +143,24 @@ impl AptabaseClient {
     }
 
     /// Flushes the event queue, blocking the current thread.
+    ///
+    /// Uses `tauri::async_runtime::block_on` which accesses Tauri's global Tokio
+    /// runtime directly, bypassing thread-local context issues that cause panics
+    /// during app shutdown (RunEvent::Exit).
     pub fn flush_blocking(&self) {
-        futures::executor::block_on(async {
-            self.flush().await;
-        });
+        // If we're already in a Tokio context (e.g. #[tokio::main]),
+        // we need block_in_place to safely call block_on.
+        if tokio::runtime::Handle::try_current().is_ok() {
+            tokio::task::block_in_place(|| {
+                tauri::async_runtime::block_on(async {
+                    self.flush().await;
+                });
+            });
+        } else {
+            // Not in a Tokio context — safe to call block_on directly.
+            tauri::async_runtime::block_on(async {
+                self.flush().await;
+            });
+        }
     }
 }
