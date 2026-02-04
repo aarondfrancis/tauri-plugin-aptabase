@@ -1,3 +1,37 @@
+//! # Why This Fork Exists
+//!
+//! The upstream `aptabase/tauri-plugin-aptabase` has a bug that causes a panic on app shutdown:
+//!
+//! ```text
+//! thread 'main' panicked at library/core/src/ops/function.rs:250:5:
+//! there is no reactor running, must be called from the context of a Tokio 1.x runtime
+//! ```
+//!
+//! ## Root Cause
+//!
+//! The original code used:
+//! - `tokio::spawn()` in `start_polling()` - requires Tokio thread-local context
+//! - `futures::executor::block_on()` in `flush_blocking()` - no Tokio reactor
+//!
+//! During `RunEvent::Exit`, the main thread has no Tokio thread-local context, so both fail.
+//! The `flush()` method uses `reqwest` for HTTP, which requires a Tokio runtime.
+//!
+//! ## The Fix
+//!
+//! Replace with `tauri::async_runtime::spawn()` and `tauri::async_runtime::block_on()`.
+//! These access Tauri's global Tokio runtime via a static `OnceLock`, bypassing thread-local
+//! context issues. The runtime is guaranteed to exist during `RunEvent::Exit`.
+//!
+//! For `flush_blocking`, we also handle the case where we're already inside a Tokio context
+//! (e.g., `#[tokio::main]`) by using `tokio::task::block_in_place()` first.
+//!
+//! ## References
+//!
+//! - Tauri Issue #10289: <https://github.com/tauri-apps/tauri/issues/10289>
+//! - PR submitted upstream: (pending)
+//!
+//! Once the upstream fix is merged, this fork can be removed.
+
 use rand::Rng;
 use serde_json::{json, Value};
 use std::time::{SystemTime, UNIX_EPOCH};
